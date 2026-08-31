@@ -172,10 +172,17 @@ st.markdown("""
         border-color: #842B35 !important;
     }
     
-    /* Sidebar */
+    /* Sidebar forzado en blanco con texto nítido */
     section[data-testid="stSidebar"] {
-        background-color: #ffffff;
+        background-color: #ffffff !important;
         border-right: 1px solid #ede4da;
+    }
+    
+    section[data-testid="stSidebar"] p, 
+    section[data-testid="stSidebar"] span, 
+    section[data-testid="stSidebar"] label, 
+    section[data-testid="stSidebar"] div {
+        color: #2b2b2b !important;
     }
     
     .summary-box {
