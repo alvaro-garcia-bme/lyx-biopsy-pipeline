@@ -533,7 +533,8 @@ def render_patient_card(patient_dict):
 # ==============================================================================
 # SIDEBAR: EXACTAMENTE 3 FORMATOS DE MAQUETACIÓN DISTINTOS
 # ==============================================================================
-sample_dir = "c:/Users/Usuario/Documents/antigravity/bold-kepler/pdfs_prueba"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sample_dir = os.path.join(BASE_DIR, "pdfs_prueba")
 sample_files = {
     "📊 Caso 1: Formato Tabular Clásico (Desglose de Cilindros en Tabla A-F)": "caso_1_tabla_hospitalaria.pdf",
     "📝 Caso 2: Formato Narrativo Libre (Dictado en Prosa Continua sin Tablas)": "caso_2_narrativa_dictado_medico.pdf",
