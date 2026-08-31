@@ -577,8 +577,8 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("""
     **Desarrollado para:**  
-    **Dr. Juan I. Martínez-Salamanca**  
-    *Director Médico · Lyx Urología*  
+    **Dirección Médica & Unidad de Urología**  
+    *Lyx Urología*  
     
     **Autor de la PoC:**  
     Álvaro García Casas  

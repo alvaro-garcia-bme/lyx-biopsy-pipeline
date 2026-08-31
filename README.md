@@ -1,6 +1,6 @@
 # 🔬 Lyx Urología — AI Clinical Data Pipeline
 
-> **Proof of Concept (PoC)** desarrollada para la Unidad de Inteligencia Clínica & Automatización de **Lyx Urología** (Director Médico: Dr. Juan I. Martínez-Salamanca).
+> **Proof of Concept (PoC)** desarrollada para la Unidad de Inteligencia Clínica & Automatización de **Lyx Urología**.
 
 ---
 
