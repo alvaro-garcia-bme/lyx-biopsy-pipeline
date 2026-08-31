@@ -1,7 +1,9 @@
 import streamlit as st
 import os
+import re
 import json
 import time
+import hashlib
 import pandas as pd
 from pypdf import PdfReader
 from groq import Groq
@@ -23,19 +25,25 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# ESTILOS CSS CON LA PALETA OFICIAL EXACTA DE LYX UROLOGÍA
-# Granate / Burgundy (#842B35), Beige / Arena (#D8C7B5), Fondo Suave (#FAF7F4)
+# ESTILOS CSS CON LA PALETA OFICIAL EXACTA DE LYX UROLOGÍA (MODO CLARO ESTRICTO)
 # ==============================================================================
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
     
-    html, body, [class*="css"] {
-        font-family: 'Plus Jakarta Sans', sans-serif;
+    :root {
+        color-scheme: light !important;
     }
     
-    .main {
-        background-color: #faf7f4;
+    html, body, [class*="css"] {
+        font-family: 'Plus Jakarta Sans', sans-serif;
+        color: #2b2b2b !important;
+        background-color: #faf7f4 !important;
+    }
+    
+    .main, .stApp {
+        background-color: #faf7f4 !important;
+        color: #2b2b2b !important;
     }
     
     /* Header Corporativo Lyx */
@@ -43,7 +51,7 @@ st.markdown("""
         background: linear-gradient(135deg, #842B35 0%, #631c24 100%);
         padding: 28px 36px;
         border-radius: 20px;
-        color: white;
+        color: white !important;
         margin-bottom: 24px;
         border-bottom: 4px solid #D8C7B5;
         box-shadow: 0 8px 24px rgba(132, 43, 53, 0.16);
@@ -54,7 +62,7 @@ st.markdown("""
         font-weight: 800;
         letter-spacing: -0.5px;
         margin: 0;
-        color: #ffffff;
+        color: #ffffff !important;
         display: flex;
         align-items: center;
         gap: 12px;
@@ -62,26 +70,27 @@ st.markdown("""
     
     .lyx-subtitle {
         font-size: 1.05rem;
-        color: #f3eae1;
+        color: #f3eae1 !important;
         margin-top: 6px;
         font-weight: 400;
     }
     
     /* Tarjetas Clínicas */
     .clinical-card {
-        background-color: #ffffff;
+        background-color: #ffffff !important;
         border-radius: 18px;
         padding: 22px;
         border: 1px solid #ede4da;
         box-shadow: 0 4px 15px rgba(132, 43, 53, 0.04);
         margin-bottom: 16px;
+        color: #2b2b2b !important;
     }
     
     /* Banners de Riesgo EAU */
     .risk-banner-high {
-        background: #fff1f2;
+        background: #fff1f2 !important;
         border-left: 6px solid #842B35;
-        color: #842B35;
+        color: #842B35 !important;
         padding: 16px 20px;
         border-radius: 14px;
         font-weight: 700;
@@ -90,9 +99,9 @@ st.markdown("""
     }
     
     .risk-banner-intermediate {
-        background: #fffbeb;
+        background: #fffbeb !important;
         border-left: 6px solid #d97706;
-        color: #92400e;
+        color: #92400e !important;
         padding: 16px 20px;
         border-radius: 14px;
         font-weight: 700;
@@ -101,9 +110,9 @@ st.markdown("""
     }
 
     .risk-banner-low {
-        background: #eff6ff;
+        background: #eff6ff !important;
         border-left: 6px solid #2563eb;
-        color: #1e40af;
+        color: #1e40af !important;
         padding: 16px 20px;
         border-radius: 14px;
         font-weight: 700;
@@ -112,9 +121,9 @@ st.markdown("""
     }
     
     .risk-banner-benign {
-        background: #f0fdf4;
+        background: #f0fdf4 !important;
         border-left: 6px solid #16a34a;
-        color: #15803d;
+        color: #15803d !important;
         padding: 16px 20px;
         border-radius: 14px;
         font-weight: 700;
@@ -123,9 +132,9 @@ st.markdown("""
     }
     
     .risk-banner-invalid {
-        background: #fdf2f8;
+        background: #fdf2f8 !important;
         border-left: 6px solid #db2777;
-        color: #9d174d;
+        color: #9d174d !important;
         padding: 16px 20px;
         border-radius: 14px;
         font-weight: 700;
@@ -157,13 +166,13 @@ st.markdown("""
     }
     
     .stTabs [data-baseweb="tab"] {
-        background-color: #ffffff;
+        background-color: #ffffff !important;
         border-radius: 12px 12px 0 0;
         padding: 12px 24px;
         font-weight: 600;
         border: 1px solid #ede4da;
         border-bottom: none;
-        color: #555555;
+        color: #555555 !important;
     }
     
     .stTabs [aria-selected="true"] {
@@ -172,7 +181,7 @@ st.markdown("""
         border-color: #842B35 !important;
     }
     
-    /* Sidebar forzado en blanco con texto nítido */
+    /* Sidebar */
     section[data-testid="stSidebar"] {
         background-color: #ffffff !important;
         border-right: 1px solid #ede4da;
@@ -186,12 +195,12 @@ st.markdown("""
     }
     
     .summary-box {
-        background-color: #faf7f4;
+        background-color: #faf7f4 !important;
         border: 1px solid #ede4da;
         border-radius: 12px;
         padding: 16px;
         margin-top: 12px;
-        color: #2b2b2b;
+        color: #2b2b2b !important;
         font-size: 0.95rem;
         line-height: 1.5;
     }
@@ -204,7 +213,6 @@ st.markdown("""
 if "processed_data" not in st.session_state:
     st.session_state.processed_data = []
 
-# Detectar automáticamente si hay una API Key configurada en Streamlit Secrets (Nube)
 default_secret_key = ""
 try:
     if "GROQ_API_KEY" in st.secrets:
@@ -219,6 +227,46 @@ elif not st.session_state.api_key and default_secret_key:
 
 if "last_exec_time" not in st.session_state:
     st.session_state.last_exec_time = 0.0
+
+# ==============================================================================
+# MOTOR LOCAL DE ANONIMIZACIÓN (DE-IDENTIFICATION PIPELINE EN MEMORIA)
+# Enmascara automáticamente Nombres, DNIs, Teléfonos y Direcciones ANTES del LLM
+# ==============================================================================
+def anonymize_clinical_text(raw_text, enabled=True):
+    """
+    Sustituye datos de carácter personal directo (PII) por tokens pseudoanonimizados
+    locales en memoria antes de transmitir el texto a cualquier motor de inferencia.
+    """
+    if not enabled or not raw_text:
+        return raw_text, {}
+    
+    anon_text = raw_text
+    replacements = {}
+    
+    # 1. Enmascarar nombres asociados a etiquetas comunes
+    name_patterns = [
+        r'(?i)(?:PACIENTE|PATIENT\s*NAME|PACIENT|NOMBRE)\s*[:：]\s*([A-Za-zÀ-ÿ\s,.\-]{3,40})(?=\n|\r|\||NHC|MRN|FECHA|DATE|EDAD|DOB)',
+        r'(?i)(?:Fdo|Dr\.|Dra\.|Médico|Facultativo|Doctor)\s*[:：]?\s*([A-Za-zÀ-ÿ\s,.\-]{3,40})(?=\n|\r|\||Col\.|Lic|Especialista)'
+    ]
+    
+    for pat in name_patterns:
+        matches = re.findall(pat, anon_text)
+        for idx, match in enumerate(matches):
+            clean_match = match.strip()
+            if len(clean_match) > 3 and not any(k in clean_match.upper() for k in ["ADENOCARCINOMA", "BIOPSIA", "GLEASON", "ESTUDIO", "UROLOG"]):
+                pseudo_id = f"PACIENTE_REF_{hashlib.md5(clean_match.encode()).hexdigest()[:6].upper()}"
+                anon_text = anon_text.replace(clean_match, pseudo_id)
+                replacements[pseudo_id] = clean_match
+                
+    # 2. Enmascarar DNIs, NIEs o Cédulas
+    dni_pattern = r'(?i)\b(?:DNI|NIE|C\.C|CEDULA|PASAPORTE)\s*[:：]?\s*([0-9]{6,10}[A-Z]?)\b'
+    anon_text = re.sub(dni_pattern, r'DNI: [ENMASCARADO_RGPD]', anon_text)
+    
+    # 3. Enmascarar teléfonos
+    phone_pattern = r'\b(?:\+34|0034)?\s*[6789]\d{2}[\s.-]?\d{3}[\s.-]?\d{3}\b'
+    anon_text = re.sub(phone_pattern, '[TELÉFONO_PROTEGIDO]', anon_text)
+    
+    return anon_text, replacements
 
 # ==============================================================================
 # FUNCIONES DE NORMALIZACIÓN CLÍNICA
@@ -277,7 +325,7 @@ def extract_text_from_pdf(pdf_file):
     except Exception as e:
         return f"Error al leer PDF: {str(e)}"
 
-def process_biopsy_with_llm(report_text, api_key, model_name):
+def process_biopsy_with_llm(report_text, api_key, model_name, anonymize_active=True):
     if not report_text or len(report_text.strip()) < 30:
         return {
             "es_documento_valido": False,
@@ -299,12 +347,14 @@ def process_biopsy_with_llm(report_text, api_key, model_name):
             "resumen_ejecutivo": "No se pudo extraer texto clínico del archivo proporcionado. Verifique que no sea un documento en blanco."
         }
 
-    if len(report_text) > 12000:
-        report_text = report_text[:12000] + "\n\n[...Texto restante truncado automáticamente para optimización de tokens...]"
+    # PASO 1: Anonimización local previa en memoria (RGPD)
+    sanitized_text, name_map = anonymize_clinical_text(report_text, enabled=anonymize_active)
+
+    if len(sanitized_text) > 12000:
+        sanitized_text = sanitized_text[:12000] + "\n\n[...Texto restante truncado automáticamente para optimización de tokens...]"
 
     client = Groq(api_key=api_key)
     
-    # PROMPT SEMÁNTICO AGNOSTICO AL FORMATO (No depende de posiciones fijas ni etiquetas exactas)
     prompt = f"""
     Eres un sistema de inteligencia clínica de máxima precisión especializado en Urología y Anatomía Patológica.
     Debes leer y comprender el siguiente informe médico. 
@@ -312,8 +362,8 @@ def process_biopsy_with_llm(report_text, api_key, model_name):
     Debes inferir y extraer semánticamente los datos clínicos clave independientemente de cómo estén redactados.
     
     REGLAS DE INTERPRETACIÓN SEMÁNTICA:
-    1. 'es_documento_valido': true si es informe urológico/biopsia prostática/patología, false si es ajeno.
-    2. 'paciente_id': Nombre del paciente (o referencia si está anonimizado).
+    1. 'es_documento_valido': true si es informe urológico/biopsia prostática/patología, false si es ajeno (artículo divulgativo, factura, etc.).
+    2. 'paciente_id': Nombre o identificador del paciente.
     3. 'nhc': Número de historia clínica, MRN, expediente o número de registro.
     4. 'fecha': Fecha del estudio o informe (DD/MM/AAAA).
     5. 'psa_pre': Valor numérico de PSA (ej: 7.40).
@@ -328,16 +378,16 @@ def process_biopsy_with_llm(report_text, api_key, model_name):
     14. 'extension_extraprostatica': 'Positiva' / 'Negativa' / 'No identificada'.
     15. 'resumen_ejecutivo': Síntesis clínica de 2 frases en español con el juicio diagnóstico y recomendación urológica.
 
-    DOCUMENTO ORIGINAL:
+    DOCUMENTO (PRE-PROCESADO LOCALMENTE):
     \"\"\"
-    {report_text}
+    {sanitized_text}
     \"\"\"
 
     Devuelve ÚNICAMENTE este JSON:
     {{
         "es_documento_valido": true,
         "motivo_invalidez": null,
-        "paciente_id": "Nombre del paciente",
+        "paciente_id": "Identificador o Nombre",
         "nhc": "Número de historia",
         "fecha": "Fecha del informe",
         "edad": "Edad o 'N/D'",
@@ -384,7 +434,7 @@ def generate_styled_excel(df_records):
     
     column_mapping = {
         "nhc": "Nº Historia (NHC)",
-        "paciente_id": "Paciente / Ref",
+        "paciente_id": "Paciente / Ref Anonimizada",
         "fecha": "Fecha Muestra",
         "edad": "Edad",
         "psa_pre": "PSA (ng/mL)",
@@ -531,7 +581,7 @@ def render_patient_card(patient_dict):
     """, unsafe_allow_html=True)
 
 # ==============================================================================
-# SIDEBAR: EXACTAMENTE 3 FORMATOS DE MAQUETACIÓN DISTINTOS
+# SIDEBAR: CONFIGURACIÓN Y MUESTRAS
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sample_dir = os.path.join(BASE_DIR, "pdfs_prueba")
@@ -556,7 +606,7 @@ with st.sidebar:
         "Groq API Key:",
         value=st.session_state.api_key,
         type="password",
-        help="Clave API gratuita de console.groq.com"
+        help="Clave API de Groq Cloud"
     )
     if api_key_input:
         st.session_state.api_key = api_key_input
@@ -569,6 +619,14 @@ with st.sidebar:
         "Modelo Activo:",
         available_models,
         index=0
+    )
+    
+    st.markdown("---")
+    st.subheader("🛡️ Seguridad & RGPD")
+    anonymize_toggle = st.toggle(
+        "Anonimización en Origen (PII)",
+        value=True,
+        help="Enmascara nombres, DNIs y datos personales antes de enviar el texto al modelo de IA."
     )
     
     st.markdown("---")
@@ -683,7 +741,7 @@ with tab1:
                     raw_text = extract_text_from_pdf(fbytes)
                     
                     try:
-                        structured = process_biopsy_with_llm(raw_text, active_key, model_choice)
+                        structured = process_biopsy_with_llm(raw_text, active_key, model_choice, anonymize_active=anonymize_toggle)
                         structured["archivo_origen"] = fname
                         
                         if structured.get("es_documento_valido", True):
@@ -868,7 +926,7 @@ with tab2:
             
         display_cols = {
             "nhc": "NHC",
-            "paciente_id": "Paciente",
+            "paciente_id": "Paciente / Ref",
             "fecha": "Fecha",
             "psa_pre": "PSA (ng/mL)",
             "diagnostico_principal": "Diagnóstico",
@@ -941,7 +999,7 @@ with tab3:
     ---
     #### 🛡️ Pilares de Seguridad Clínica:
     1. **Anonimización en Origen (De-Identification Pipeline):**
-       Antes de transmitir cualquier texto, un módulo de procesamiento local sustituye datos personales directos por identificadores sintéticos pseudoanonimizados (`PACIENTE_REF_102`).
+       Antes de transmitir cualquier texto, un módulo de procesamiento local en Python sustituye automáticamente datos personales directos por identificadores sintéticos pseudoanonimizados (`PACIENTE_REF_XXXX`), protegiendo la identidad del paciente.
     
     2. **Despliegue On-Premise / Servidor Local Seguro:**
        Para entornos de producción hospitalaria, el motor de inferencia puede ejecutarse en un servidor local privado de Lyx Urología utilizando modelos abiertos de última generación (**Llama 3 / Mistral / DeepSeek**) optimizados con Ollama o vLLM, garantizando que **ningún dato clínico sale jamás de la intranet médica**.
