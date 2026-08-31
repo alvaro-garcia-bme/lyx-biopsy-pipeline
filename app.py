@@ -229,13 +229,12 @@ if "last_exec_time" not in st.session_state:
     st.session_state.last_exec_time = 0.0
 
 # ==============================================================================
-# MOTOR LOCAL DE ANONIMIZACIÓN (DE-IDENTIFICATION PIPELINE EN MEMORIA)
-# Enmascara automáticamente Nombres, DNIs, Teléfonos y Direcciones ANTES del LLM
+# MOTOR LOCAL DE ANONIMIZACIÓN (DE-IDENTIFICATION PIPELINE EN 3 CAPAS)
 # ==============================================================================
 def anonymize_clinical_text(raw_text, enabled=True):
     """
-    Sustituye datos de carácter personal directo (PII) por tokens pseudoanonimizados
-    locales en memoria antes de transmitir el texto a cualquier motor de inferencia.
+    Capa 1: Enmascara patrones de nombres, identificadores personales,
+    DNIs y teléfonos antes de la llamada al modelo.
     """
     if not enabled or not raw_text:
         return raw_text, {}
@@ -243,26 +242,28 @@ def anonymize_clinical_text(raw_text, enabled=True):
     anon_text = raw_text
     replacements = {}
     
-    # 1. Enmascarar nombres asociados a etiquetas comunes
+    # Patrones exhaustivos de nombres y etiquetas médicas
     name_patterns = [
-        r'(?i)(?:PACIENTE|PATIENT\s*NAME|PACIENT|NOMBRE)\s*[:：]\s*([A-Za-zÀ-ÿ\s,.\-]{3,40})(?=\n|\r|\||NHC|MRN|FECHA|DATE|EDAD|DOB)',
-        r'(?i)(?:Fdo|Dr\.|Dra\.|Médico|Facultativo|Doctor)\s*[:：]?\s*([A-Za-zÀ-ÿ\s,.\-]{3,40})(?=\n|\r|\||Col\.|Lic|Especialista)'
+        r'(?i)(?:PACIENTE|PATIENT(?:\s*NAME)?|PACIENT|NOMBRE(?:\s*PACIENTE)?|APELLIDOS\s*Y\s*NOMBRE|D\./DÑA\.)\s*[:：]?\s*([A-Za-zÀ-ÿ\s,.\-]{3,45})(?=\n|\r|\||NHC|MRN|FECHA|DATE|EDAD|DOB|ID|TÉCNICA|\()',
+        r'(?i)(?:Patient\s*Information\s*\n\s*)([A-Za-zÀ-ÿ\s,.\-]{3,35})(?=\n|\r|MRN|DOB|PSA)',
+        r'(?i)(?:Fdo|Dr\.|Dra\.|Médico|Facultativo|Doctor|Pathologist)\s*[:：]?\s*([A-Za-zÀ-ÿ\s,.\-]{3,40})(?=\n|\r|\||Col\.|Lic|Especialista|Board)'
     ]
     
     for pat in name_patterns:
         matches = re.findall(pat, anon_text)
-        for idx, match in enumerate(matches):
+        for match in matches:
             clean_match = match.strip()
-            if len(clean_match) > 3 and not any(k in clean_match.upper() for k in ["ADENOCARCINOMA", "BIOPSIA", "GLEASON", "ESTUDIO", "UROLOG"]):
+            # Validar que no sea una palabra médica clave
+            if len(clean_match) > 3 and not any(k in clean_match.upper() for k in ["ADENOCARCINOMA", "BIOPSIA", "GLEASON", "ESTUDIO", "UROLOG", "HISTOPATOL", "PROSTATE"]):
                 pseudo_id = f"PACIENTE_REF_{hashlib.md5(clean_match.encode()).hexdigest()[:6].upper()}"
                 anon_text = anon_text.replace(clean_match, pseudo_id)
                 replacements[pseudo_id] = clean_match
                 
-    # 2. Enmascarar DNIs, NIEs o Cédulas
+    # Enmascarar DNIs, Cédulas, Pasaportes
     dni_pattern = r'(?i)\b(?:DNI|NIE|C\.C|CEDULA|PASAPORTE)\s*[:：]?\s*([0-9]{6,10}[A-Z]?)\b'
     anon_text = re.sub(dni_pattern, r'DNI: [ENMASCARADO_RGPD]', anon_text)
     
-    # 3. Enmascarar teléfonos
+    # Enmascarar teléfonos
     phone_pattern = r'\b(?:\+34|0034)?\s*[6789]\d{2}[\s.-]?\d{3}[\s.-]?\d{3}\b'
     anon_text = re.sub(phone_pattern, '[TELÉFONO_PROTEGIDO]', anon_text)
     
@@ -347,7 +348,7 @@ def process_biopsy_with_llm(report_text, api_key, model_name, anonymize_active=T
             "resumen_ejecutivo": "No se pudo extraer texto clínico del archivo proporcionado. Verifique que no sea un documento en blanco."
         }
 
-    # PASO 1: Anonimización local previa en memoria (RGPD)
+    # CAPA 1: Pre-procesamiento local en memoria (Regex / PII Masking)
     sanitized_text, name_map = anonymize_clinical_text(report_text, enabled=anonymize_active)
 
     if len(sanitized_text) > 12000:
@@ -355,15 +356,19 @@ def process_biopsy_with_llm(report_text, api_key, model_name, anonymize_active=T
 
     client = Groq(api_key=api_key)
     
+    # CAPA 2: Instrucción estricta de privacidad en el prompt
+    anon_instruction = "IMPORTANTE RGPD: Si aparece cualquier nombre propio real, NUNCA lo devuelvas en claro; sustitúyelo por un identificador del tipo 'PACIENTE_REF_XXXX'." if anonymize_active else ""
+    
     prompt = f"""
     Eres un sistema de inteligencia clínica de máxima precisión especializado en Urología y Anatomía Patológica.
     Debes leer y comprender el siguiente informe médico. 
-    ADVERTENCIA: El documento puede presentarse en CUALQUIER diseño (tabla, prosa continua, checklist, dictado médico, en español o inglés, con diferentes nombres de campos).
-    Debes inferir y extraer semánticamente los datos clínicos clave independientemente de cómo estén redactados.
+    ADVERTENCIA: El documento puede presentarse en CUALQUIER diseño (tabla, prosa continua, checklist, dictado médico, en español o inglés).
+    Debes inferir y extraer semánticamente los datos clínicos clave.
+    {anon_instruction}
     
     REGLAS DE INTERPRETACIÓN SEMÁNTICA:
     1. 'es_documento_valido': true si es informe urológico/biopsia prostática/patología, false si es ajeno (artículo divulgativo, factura, etc.).
-    2. 'paciente_id': Nombre o identificador del paciente.
+    2. 'paciente_id': Identificador o Nombre del paciente.
     3. 'nhc': Número de historia clínica, MRN, expediente o número de registro.
     4. 'fecha': Fecha del estudio o informe (DD/MM/AAAA).
     5. 'psa_pre': Valor numérico de PSA (ej: 7.40).
@@ -387,7 +392,7 @@ def process_biopsy_with_llm(report_text, api_key, model_name, anonymize_active=T
     {{
         "es_documento_valido": true,
         "motivo_invalidez": null,
-        "paciente_id": "Identificador o Nombre",
+        "paciente_id": "Identificador protegido tipo 'PACIENTE_REF_XXXX' o Nombre",
         "nhc": "Número de historia",
         "fecha": "Fecha del informe",
         "edad": "Edad o 'N/D'",
@@ -417,6 +422,14 @@ def process_biopsy_with_llm(report_text, api_key, model_name, anonymize_active=T
     
     res = json.loads(response.choices[0].message.content)
     
+    # CAPA 3: Post-procesado determinista obligatorio de anonimización (Hash Guard)
+    if anonymize_active and res.get("es_documento_valido", True):
+        current_p_id = str(res.get("paciente_id", "")).strip()
+        # Si el ID devuelto no es ya un PACIENTE_REF_XXXX y no es genérico, forzar hash
+        if current_p_id and not current_p_id.startswith("PACIENTE_REF_") and current_p_id not in ["N/D", "Desconocido", "Documento No Procesable"]:
+            hash_suffix = hashlib.md5(current_p_id.encode()).hexdigest()[:6].upper()
+            res["paciente_id"] = f"PACIENTE_REF_{hash_suffix}"
+            
     if res.get("es_documento_valido", True):
         g_score = str(res.get("gleason_score", "")).lower()
         if any(k in g_score for k in ["6", "7", "8", "9", "10", "3+3", "3+4", "4+3", "4+4", "4+5"]):
@@ -926,7 +939,7 @@ with tab2:
             
         display_cols = {
             "nhc": "NHC",
-            "paciente_id": "Paciente / Ref",
+            "paciente_id": "Paciente / Ref Anonimizada",
             "fecha": "Fecha",
             "psa_pre": "PSA (ng/mL)",
             "diagnostico_principal": "Diagnóstico",
